@@ -1,4 +1,4 @@
-# NoVa-OS kernel build: "1.6.2", public build: "0.1"
+# NoVa-OS kernel build: "1.6.2", public build: "0.1", codename: "iftoman" (i forgot to make a name)
 <img width="64" height="64" alt="NoVa-OS" src="https://github.com/user-attachments/assets/ae8daeb1-f68c-437b-8932-8ff0c7253efb" />
 
 BASIC RUNDOWN:

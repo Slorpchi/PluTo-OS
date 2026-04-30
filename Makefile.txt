@@ -1,0 +1,91 @@
+# =====================================================================
+# NoVa OS - Build System (Doom Edition!)
+# =====================================================================
+
+AS = nasm
+LD = ld
+ASFLAGS = -f elf32
+LDFLAGS = -m elf_i386 -T linker.ld
+CC = gcc
+CFLAGS = -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-strict-aliasing -Wall -Wno-misleading-indentation -O2
+
+all: nova.iso hdd.img
+
+kernel.o: os_workspace.asm
+	$(AS) $(ASFLAGS) os_workspace.asm -o kernel.o
+
+nova.bin: kernel.o linker.ld
+	$(LD) $(LDFLAGS) kernel.o -o nova.bin
+
+# --- ASSEMBLY APPLICATIONS ---
+cube.o: cube.asm
+	$(AS) $(ASFLAGS) cube.asm -o cube.o
+
+cube.elf: cube.o
+	$(LD) -m elf_i386 -Ttext 0x4000000 -Tdata 0x4001000 cube.o -o cube.elf
+
+# --- C LIBRARY & APPLICATIONS ---
+nova_libc.o: nova_libc.c
+	$(CC) $(CFLAGS) -c nova_libc.c -o nova_libc.o
+	objcopy -W open -W read -W close nova_libc.o
+
+PlutoGL.o: PlutoGL.c
+	$(CC) $(CFLAGS) -c PlutoGL.c -o PlutoGL.o
+
+PlutoGL.elf: PlutoGL.o nova_libc.o
+	$(LD) -m elf_i386 -Ttext 0x4000000 PlutoGL.o nova_libc.o -o PlutoGL.elf
+
+wasd.o: wasd.c
+	$(CC) $(CFLAGS) -c wasd.c -o wasd.o
+
+wasd.elf: wasd.o nova_libc.o
+	$(LD) -m elf_i386 -Ttext 0x4000000 wasd.o nova_libc.o -o wasd.elf
+
+# --- DOOMGENERIC PORT ---
+DOOM_SRCS_ALL = $(wildcard doomgeneric/doomgeneric/*.c)
+DOOM_SRCS = $(filter-out doomgeneric/doomgeneric/doomgeneric_%.c doomgeneric/doomgeneric/i_allegro%.c doomgeneric/doomgeneric/i_sdl%.c, $(DOOM_SRCS_ALL))
+DOOM_OBJS = $(DOOM_SRCS:.c=.o)
+
+doom_libc.o: doom_libc.c doom_libc.h
+	$(CC) $(CFLAGS) -w -c doom_libc.c -o doom_libc.o
+
+doomgeneric_nova.o: doomgeneric_nova.c doom_libc.h
+	$(CC) $(CFLAGS) -w -Idoomgeneric/doomgeneric -c doomgeneric_nova.c -o doomgeneric_nova.o
+
+doomgeneric/doomgeneric/%.o: doomgeneric/doomgeneric/%.c
+	$(CC) $(CFLAGS) -w -Idoomgeneric/doomgeneric -c $< -o $@
+
+# FIX: Notice we removed nova_libc.o from this specific compile line to avoid duplicates!
+doom.elf: $(DOOM_OBJS) doomgeneric_nova.o doom_libc.o
+	$(LD) -m elf_i386 -Ttext 0x4000000 $(DOOM_OBJS) doomgeneric_nova.o doom_libc.o -o doom.elf
+
+# --- RAM DISK GENERATION ---
+hdd.img: cube.elf PlutoGL.elf wasd.elf doom.elf DOOM1.WAD
+	dd if=/dev/zero of=hdd.img bs=1M count=34 2>/dev/null
+	mkfs.fat -F 32 -n "NOVA_RAM" hdd.img
+	mmd -i hdd.img ::/bin ::/root ::/dev ::/etc
+	mcopy -i hdd.img cube.elf ::/bin/cube.elf
+	mcopy -i hdd.img PlutoGL.elf ::/bin/PlutoGL.elf
+	mcopy -i hdd.img wasd.elf ::/bin/wasd.elf
+	mcopy -i hdd.img doom.elf ::/bin/doom.elf
+	
+	# Load the WAD file to the root directory
+	mcopy -i hdd.img DOOM1.WAD ::/DOOM1.WAD
+	
+	# Copy BMPs and filelist for PlutoGL
+	mcopy -i hdd.img *.bmp ::/ 2>/dev/null || true
+	ls -1 *.bmp > filelist.txt 2>/dev/null && mcopy -i hdd.img filelist.txt ::/ || true
+
+nova.iso: nova.bin hdd.img
+	mkdir -p isodir/boot/grub
+	cp nova.bin isodir/boot/nova.bin
+	cp hdd.img isodir/boot/hdd.img
+	(echo 'menuentry "NoVa OS" {' && \
+	 echo '  multiboot /boot/nova.bin' && \
+	 echo '  module /boot/hdd.img' && \
+	 echo '  boot' && \
+	 echo '}') > isodir/boot/grub/grub.cfg
+	grub-mkrescue -o nova.iso isodir
+
+clean:
+	rm -rf *.o doomgeneric/doomgeneric/*.o *.elf *.bin *.iso isodir hdd.img filelist.txt
